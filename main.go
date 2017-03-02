@@ -1,39 +1,17 @@
 package main
 
 import (
-	"net/http"
-
 	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path"
 
 	"github.com/gin-gonic/gin"
 )
 
 var pi string
 var repo string
-
-type PushEvent struct {
-	Pusher     *Pusher     `json:"pusher" binding:"required"`
-	Repository *Repository `json:"repository" binding:"required"`
-	HeadCommit *HeadCommit `json:"head_commit" binding:"required"`
-}
-
-type Pusher struct {
-	Name  string `json:"name" binding:"required"`
-	Email string `json:"email" binding:"required"`
-}
-
-type Repository struct {
-	Name  string `json:"name" binding:"required"`
-	Owner *Owner `json:"owner" binding:"required"`
-}
-
-type Owner struct {
-	Name string `json:"name" binding:"required"`
-}
-
-type HeadCommit struct {
-	ID string `json:"id" binding:"required"`
-}
 
 func main() {
 	router := gin.Default()
@@ -42,7 +20,20 @@ func main() {
 	router.GET("/pi", getPi)
 	router.POST("/pi", postPi)
 	router.POST("/webhook", webhook)
+	router.GET("/test", test)
 	router.Run()
+}
+
+func test(c *gin.Context) {
+	os.Chdir(path.Join(os.Getenv("HOME"), "smartfarm_sketch"))
+	cmd := "git"
+	args := []string{"pull"}
+	out, err := exec.Command(cmd, args...).Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
 }
 
 func getRepo(c *gin.Context) {
@@ -64,7 +55,21 @@ func postPi(c *gin.Context) {
 }
 
 func webhook(c *gin.Context) {
-	fmt.Println(c.Keys)
-	fmt.Println(c.Params)
+	b := []byte{}
+	c.Request.Body.Read(b)
+	event := c.Request.Header.Get("X-GitHub-Event")
+	if event == "push" {
+		os.Chdir(path.Join(os.Getenv("HOME"), "smartfarm_sketch"))
+		cmd := "git"
+		args := []string{"pull"}
+		out, err := exec.Command(cmd, args...).Output()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(string(out))
+	} else if event == "ping" {
+		fmt.Println("Github is testing!")
+	}
 	c.String(http.StatusOK, "OK")
 }
