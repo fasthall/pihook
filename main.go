@@ -64,8 +64,7 @@ func postPi(c *gin.Context) {
 }
 
 func webhook(c *gin.Context) {
-	var push PushEvent
-	c.Bind(&push)
-	fmt.Println(push)
+	fmt.Println(c.Keys)
+	fmt.Println(c.Params)
 	c.String(http.StatusOK, "OK")
 }
