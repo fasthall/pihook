@@ -4,17 +4,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/gin-gonic/gin"
-	uuid "github.com/nu7hatch/gouuid"
+	"github.com/nu7hatch/gouuid"
 )
 
 var pi string
@@ -33,7 +36,7 @@ func main() {
 
 func test(c *gin.Context) {
 	u, err := uuid.NewV4()
-	cmd := exec.Command("git", "clone", repo, u.String())
+	cmd := exec.Command("git", "clone", repo, "tmp/"+u.String())
 	err = cmd.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -43,9 +46,36 @@ func test(c *gin.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Cloned into", path.Join(dir, u.String()))
-	cid := runContainer("fasthall/smartfarm_sketch", path.Join(dir, u.String()))
+	fmt.Println("Cloned into", path.Join(dir, "tmp", u.String()))
+	cid := runContainer("fasthall/smartfarm_sketch", path.Join(dir, "tmp", u.String()))
 	fmt.Println(cid)
+	// filename := path.Join(dir, u.String(), "upload.ino.hex")
+	filename := path.Join(dir, "tmp", u.String(), "upload.ino.hex")
+	for checkStatus(cid) == "running" {
+		time.Sleep(time.Millisecond * 100)
+	}
+	err = sendToPi(filename)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		c.String(http.StatusBadRequest, fmt.Sprintf("Couldn't read file %s", filename))
+	}
+	c.String(http.StatusOK, "Sent to Pi")
+}
+
+func sendToPi(filename string) error {
+	b, err := ioutil.ReadFile(filename)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return err
+	}
+	conn, err := net.Dial("tcp", "128.111.45.202:8080")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return err
+	}
+	defer conn.Close()
+	conn.Write(b)
+	return nil
 }
 
 func getRepo(c *gin.Context) {
@@ -71,15 +101,31 @@ func webhook(c *gin.Context) {
 	c.Request.Body.Read(b)
 	event := c.Request.Header.Get("X-GitHub-Event")
 	if event == "push" {
-		os.Chdir(path.Join(os.Getenv("HOME"), "smartfarm_sketch"))
-		cmd := "git"
-		args := []string{"pull"}
-		out, err := exec.Command(cmd, args...).Output()
+		u, err := uuid.NewV4()
+		cmd := exec.Command("git", "clone", repo, "tmp/"+u.String())
+		err = cmd.Run()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			c.String(http.StatusBadRequest, fmt.Sprintf("Couldn't clone the repo %s", repo))
 		}
-		fmt.Println(string(out))
+		dir, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Cloned into", path.Join(dir, "tmp", u.String()))
+		cid := runContainer("fasthall/smartfarm_sketch", path.Join(dir, "tmp", u.String()))
+		fmt.Println(cid)
+		// filename := path.Join(dir, u.String(), "upload.ino.hex")
+		filename := path.Join(dir, "tmp", u.String(), "upload.ino.hex")
+		for checkStatus(cid) == "running" {
+			time.Sleep(time.Millisecond * 100)
+		}
+		err = sendToPi(filename)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			c.String(http.StatusBadRequest, fmt.Sprintf("Couldn't read file %s", filename))
+		}
+		c.String(http.StatusOK, "Sent to Pi")
 	} else if event == "ping" {
 		fmt.Println("Github is testing!")
 	}
@@ -114,4 +160,17 @@ func runContainer(repo, bind string) string {
 	}
 
 	return resp.ID
+}
+
+func checkStatus(cid string) string {
+	ctx := context.Background()
+	cli, err := client.NewEnvClient()
+	if err != nil {
+		panic(err)
+	}
+	stats, err := cli.ContainerInspect(ctx, cid)
+	if err != nil {
+		panic(err)
+	}
+	return stats.State.Status
 }
