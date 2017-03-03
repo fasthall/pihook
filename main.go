@@ -25,15 +25,9 @@ func main() {
 }
 
 func test(c *gin.Context) {
-	os.Chdir(path.Join(os.Getenv("HOME"), "smartfarm_sketch"))
-	cmd := "git"
-	args := []string{"pull"}
-	out, err := exec.Command(cmd, args...).Output()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	fmt.Println(string(out))
+	cid := Run("fasthall/smartfarm_sketch")
+	fmt.Println(cid)
+	Copy(cid, "/smartfarm_sketch/upload.ino.hex", "./upload.ino.hex")
 }
 
 func getRepo(c *gin.Context) {
