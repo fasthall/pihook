@@ -1,13 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 	"github.com/gin-gonic/gin"
+	uuid "github.com/nu7hatch/gouuid"
 )
 
 var pi string
@@ -25,9 +32,20 @@ func main() {
 }
 
 func test(c *gin.Context) {
-	cid := Run("fasthall/smartfarm_sketch")
+	u, err := uuid.NewV4()
+	cmd := exec.Command("git", "clone", repo, u.String())
+	err = cmd.Run()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		c.String(http.StatusBadRequest, fmt.Sprintf("Couldn't clone the repo %s", repo))
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Cloned into", path.Join(dir, u.String()))
+	cid := runContainer("fasthall/smartfarm_sketch", path.Join(dir, u.String()))
 	fmt.Println(cid)
-	Copy(cid, "/smartfarm_sketch/upload.ino.hex", "./upload.ino.hex")
 }
 
 func getRepo(c *gin.Context) {
@@ -66,4 +84,34 @@ func webhook(c *gin.Context) {
 		fmt.Println("Github is testing!")
 	}
 	c.String(http.StatusOK, "OK")
+}
+
+func runContainer(repo, bind string) string {
+	ctx := context.Background()
+	cli, err := client.NewEnvClient()
+	if err != nil {
+		panic(err)
+	}
+
+	out, err := cli.ImagePull(ctx, repo, types.ImagePullOptions{})
+	if err != nil {
+		panic(err)
+	}
+	io.Copy(os.Stdout, out)
+
+	resp, err := cli.ContainerCreate(ctx, &container.Config{
+		Image: repo,
+	}, &container.HostConfig{
+		AutoRemove: true,
+		Binds:      []string{bind + ":/smartfarm_sketch/sketch/"},
+	}, nil, "")
+	if err != nil {
+		panic(err)
+	}
+
+	if err := cli.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		panic(err)
+	}
+
+	return resp.ID
 }
